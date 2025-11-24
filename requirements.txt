@@ -1,0 +1,7 @@
+PyQt5==5.15.10
+QScintilla==2.14.1
+cryptography==41.0.7
+markdown2==2.4.10
+qtawesome==1.2.3
+pytest==6.2.4
+pytest-cov==2.12.1
