@@ -1,59 +1,68 @@
-"""Notebook data model."""
-from dataclasses import dataclass, field
+"""Notebook model for organizing notes."""
+import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
-from uuid import uuid4
+
 
 @dataclass
 class Notebook:
-    """Notebook data model."""
+    """Notebook for organizing notes hierarchically."""
+    id: str
+    name: str
+    parent_id: Optional[str]
+    color: Optional[str]
+    icon: Optional[str]
+    created_at: datetime
+    modified_at: datetime
+    note_count: int
+    is_default: bool
+    sort_order: int
     
-    id: str = field(default_factory=lambda: str(uuid4()))
-    name: str = ""
-    icon: str = "📓"
-    color: str = "#4A9EFF"
-    description: str = ""
-    parent_id: Optional[str] = None
-    sort_order: int = 0
-    is_default: bool = False
-    created_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now)
-    
-    # View preferences
-    default_view: str = "list"  # list or grid
-    sort_by: str = "updated_at"  # updated_at, created_at, title
+    @staticmethod
+    def create_new(name: str, parent_id: Optional[str] = None) -> 'Notebook':
+        """Create a new notebook with default values."""
+        now = datetime.now()
+        return Notebook(
+            id=str(uuid.uuid4()),
+            name=name,
+            parent_id=parent_id,
+            color=None,
+            icon="📓",
+            created_at=now,
+            modified_at=now,
+            note_count=0,
+            is_default=False,
+            sort_order=0
+        )
     
     def to_dict(self) -> dict:
-        """Convert to dictionary."""
+        """Convert to dictionary for storage."""
         return {
             'id': self.id,
             'name': self.name,
-            'icon': self.icon,
-            'color': self.color,
-            'description': self.description,
             'parent_id': self.parent_id,
-            'sort_order': self.sort_order,
-            'is_default': self.is_default,
+            'color': self.color,
+            'icon': self.icon,
             'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat(),
-            'default_view': self.default_view,
-            'sort_by': self.sort_by,
+            'modified_at': self.modified_at.isoformat(),
+            'note_count': self.note_count,
+            'is_default': int(self.is_default),
+            'sort_order': self.sort_order
         }
     
-    @classmethod
-    def from_dict(cls, data: dict) -> 'Notebook':
-        """Create from dictionary."""
-        return cls(
+    @staticmethod
+    def from_dict(data: dict) -> 'Notebook':
+        """Create notebook from dictionary."""
+        return Notebook(
             id=data['id'],
-            name=data.get('name', ''),
-            icon=data.get('icon', '📓'),
-            color=data.get('color', '#4A9EFF'),
-            description=data.get('description', ''),
+            name=data['name'],
             parent_id=data.get('parent_id'),
-            sort_order=data.get('sort_order', 0),
-            is_default=bool(data.get('is_default', False)),
+            color=data.get('color'),
+            icon=data.get('icon', "📓"),
             created_at=datetime.fromisoformat(data['created_at']),
-            updated_at=datetime.fromisoformat(data['updated_at']),
-            default_view=data.get('default_view', 'list'),
-            sort_by=data.get('sort_by', 'updated_at'),
+            modified_at=datetime.fromisoformat(data['modified_at']),
+            note_count=data.get('note_count', 0),
+            is_default=bool(data.get('is_default', 0)),
+            sort_order=data.get('sort_number', 0)
         )

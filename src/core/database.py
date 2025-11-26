@@ -1,367 +1,407 @@
-"""SQLite database manager."""
+"""Enhanced database with complete schema and query methods."""
 import sqlite3
 import logging
 from pathlib import Path
-from typing import List, Optional
-from contextlib import contextmanager
-from datetime import datetime
-from uuid import uuid4
-
-from src.models.note import Note
-from src.models.notebook import Notebook
+from typing import List, Optional, Any, Tuple
 
 logger = logging.getLogger(__name__)
 
 
 class Database:
-    """SQLite database manager."""
+    """SQLite database manager with complete schema."""
     
     def __init__(self, db_path: Path):
-        """Initialize database."""
+        """Initialize database connection."""
         self.db_path = db_path
-        self._ensure_database()
-        logger.info(f"Database initialized: {db_path}")
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.connection = None
+        self.connect()
+        self.initialize_schema()
+        logger.info(f"Database initialized: {self.db_path}")
     
-    @contextmanager
-    def get_connection(self):
-        """Get database connection."""
-        conn = sqlite3.connect(str(self.db_path))
-        conn.row_factory = sqlite3.Row
+    def connect(self):
+        """Establish database connection."""
         try:
-            yield conn
-            conn.commit()
+            self.connection = sqlite3.connect(str(self.db_path), check_same_thread=False)
+            self.connection.row_factory = sqlite3.Row
+            # Enable foreign keys
+            self.connection.execute("PRAGMA foreign_keys = ON")
+            logger.debug("Database connection established")
         except Exception as e:
-            conn.rollback()
-            logger.error(f"Database error: {e}")
+            logger.error(f"Database connection failed: {e}")
             raise
-        finally:
-            conn.close()
     
-    def _ensure_database(self):
-        """Create database schema."""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
+    def initialize_schema(self):
+        """Create all required tables."""
+        cursor = self.connection.cursor()
+        
+        try:
+            # Check if schema needs migration
+            needs_migration = self._check_schema_migration()
+            
+            if needs_migration:
+                logger.info("Schema migration needed, recreating tables...")
+                self._drop_old_schema()
+            
+            # Notes table with all fields
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS notes (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    notebook_id TEXT,
+                    tags TEXT DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    modified_at TEXT NOT NULL,
+                    is_favorite INTEGER DEFAULT 0,
+                    is_pinned INTEGER DEFAULT 0,
+                    is_archived INTEGER DEFAULT 0,
+                    is_trashed INTEGER DEFAULT 0,
+                    color TEXT,
+                    attachments TEXT DEFAULT '',
+                    images TEXT DEFAULT '',
+                    links TEXT DEFAULT '',
+                    has_tasks INTEGER DEFAULT 0,
+                    completed_tasks INTEGER DEFAULT 0,
+                    total_tasks INTEGER DEFAULT 0,
+                    word_count INTEGER DEFAULT 0,
+                    character_count INTEGER DEFAULT 0,
+                    reading_time INTEGER DEFAULT 0,
+                    encrypted INTEGER DEFAULT 1,
+                    encryption_version TEXT DEFAULT '1.0',
+                    FOREIGN KEY (notebook_id) REFERENCES notebooks(id)
+                )
+            """)
             
             # Notebooks table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS notebooks (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
-                    icon TEXT DEFAULT '📓',
-                    color TEXT DEFAULT '#4A9EFF',
-                    description TEXT,
                     parent_id TEXT,
+                    color TEXT,
+                    icon TEXT DEFAULT '📓',
+                    created_at TEXT NOT NULL,
+                    modified_at TEXT NOT NULL,
+                    note_count INTEGER DEFAULT 0,
+                    is_default INTEGER DEFAULT 0,
                     sort_order INTEGER DEFAULT 0,
-                    is_default BOOLEAN DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    default_view TEXT DEFAULT 'list',
-                    sort_by TEXT DEFAULT 'updated_at'
+                    FOREIGN KEY (parent_id) REFERENCES notebooks(id)
                 )
             """)
             
-            # Notes table
+            # Tags table
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS notes (
+                CREATE TABLE IF NOT EXISTS tags (
                     id TEXT PRIMARY KEY,
-                    title TEXT,
-                    content TEXT,
-                    content_encrypted BLOB,
-                    notebook_id TEXT,
-                    tags TEXT,
-                    is_favorite BOOLEAN DEFAULT 0,
-                    is_encrypted BOOLEAN DEFAULT 1,
+                    name TEXT NOT NULL UNIQUE,
+                    color TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    deleted_at TEXT,
-                    word_count INTEGER DEFAULT 0,
-                    char_count INTEGER DEFAULT 0,
-                    has_images BOOLEAN DEFAULT 0,
-                    has_checkboxes BOOLEAN DEFAULT 0,
-                    FOREIGN KEY (notebook_id) REFERENCES notebooks(id)
+                    note_count INTEGER DEFAULT 0
                 )
             """)
             
-            # Indexes for performance
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_notebook ON notes(notebook_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes(updated_at DESC)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_deleted ON notes(deleted_at)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_favorite ON notes(is_favorite)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_tags ON notes(tags)")
-            
-            # Create default notebook if none exists
-            cursor.execute("SELECT COUNT(*) FROM notebooks")
-            if cursor.fetchone()[0] == 0:
-                default_notebook = Notebook(
-                    id=str(uuid4()),
-                    name="My Notes",
-                    icon="📓",
-                    color="#4A9EFF",
-                    is_default=True,
+            # Attachments table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS attachments (
+                    id TEXT PRIMARY KEY,
+                    note_id TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    file_size INTEGER NOT NULL,
+                    mime_type TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
                 )
-                self._insert_notebook(cursor, default_notebook)
-                logger.info("Created default notebook")
+            """)
             
-            conn.commit()
-    
-    def _insert_notebook(self, cursor, notebook: Notebook):
-        """Insert notebook."""
-        data = notebook.to_dict()
-        cursor.execute("""
-            INSERT INTO notebooks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, tuple(data.values()))
-    
-    def create_notebook(self, notebook: Notebook) -> bool:
-        """Create notebook."""
-        try:
-            with self.get_connection() as conn:
-                self._insert_notebook(conn.cursor(), notebook)
-            logger.info(f"Notebook created: {notebook.name}")
-            return True
+            # Create indexes for better performance
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_notes_notebook 
+                ON notes(notebook_id)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_notes_modified 
+                ON notes(modified_at)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_notes_favorite 
+                ON notes(is_favorite)
+            """)
+            
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_notes_trashed 
+                ON notes(is_trashed)
+            """)
+            
+            self.connection.commit()
+            logger.debug("Database schema initialized")
+            
         except Exception as e:
-            logger.error(f"Failed to create notebook: {e}")
+            logger.error(f"Schema initialization failed: {e}")
+            self.connection.rollback()
+            raise
+    
+    def _check_schema_migration(self) -> bool:
+        """Check if schema needs migration."""
+        try:
+            # Check if notes table exists and has the correct columns
+            result = self.query_one("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='notes'
+            """)
+            
+            if result:
+                # Check if modified_at column exists
+                cursor = self.connection.cursor()
+                cursor.execute("PRAGMA table_info(notes)")
+                columns = [row[1] for row in cursor.fetchall()]
+                
+                # If modified_at doesn't exist, we need migration
+                if 'modified_at' not in columns:
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Schema check failed: {e}")
             return False
     
-    def get_notebook(self, notebook_id: str) -> Optional[Notebook]:
-        """Get notebook by ID."""
+    def _drop_old_schema(self):
+        """Drop old schema tables."""
         try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM notebooks WHERE id = ?", (notebook_id,))
-                row = cursor.fetchone()
-                if row:
-                    return Notebook.from_dict(dict(row))
-            return None
+            cursor = self.connection.cursor()
+            
+            # Disable foreign keys temporarily
+            cursor.execute("PRAGMA foreign_keys = OFF")
+            
+            # Drop old tables
+            cursor.execute("DROP TABLE IF EXISTS notes")
+            cursor.execute("DROP TABLE IF EXISTS notebooks")
+            cursor.execute("DROP TABLE IF EXISTS tags")
+            cursor.execute("DROP TABLE IF EXISTS attachments")
+            
+            # Drop old indexes
+            cursor.execute("DROP INDEX IF EXISTS idx_notes_notebook")
+            cursor.execute("DROP INDEX IF EXISTS idx_notes_modified")
+            cursor.execute("DROP INDEX IF EXISTS idx_notes_favorite")
+            cursor.execute("DROP INDEX IF EXISTS idx_notes_trashed")
+            
+            self.connection.commit()
+            
+            # Re-enable foreign keys
+            cursor.execute("PRAGMA foreign_keys = ON")
+            
+            logger.info("Old schema dropped successfully")
+            
         except Exception as e:
-            logger.error(f"Failed to get notebook: {e}")
+            logger.error(f"Failed to drop old schema: {e}")
+            self.connection.rollback()
+            raise
+    
+    def execute(self, query: str, params: Tuple = ()) -> sqlite3.Cursor:
+        """
+        Execute a query (INSERT, UPDATE, DELETE).
+        
+        Args:
+            query: SQL query
+            params: Query parameters
+            
+        Returns:
+            Cursor object
+        """
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute(query, params)
+            self.connection.commit()
+            return cursor
+        except Exception as e:
+            logger.error(f"Query execution failed: {e}\nQuery: {query}\nParams: {params}")
+            self.connection.rollback()
+            raise
+    
+    def query_one(self, query: str, params: Tuple = ()) -> Optional[sqlite3.Row]:
+        """
+        Execute query and return one result.
+        
+        Args:
+            query: SQL query
+            params: Query parameters
+            
+        Returns:
+            Single row or None
+        """
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute(query, params)
+            return cursor.fetchone()
+        except Exception as e:
+            logger.error(f"Query failed: {e}\nQuery: {query}\nParams: {params}")
             return None
     
-    def get_default_notebook(self) -> Optional[Notebook]:
-        """Get default notebook."""
+    def query_all(self, query: str, params: Tuple = ()) -> List[sqlite3.Row]:
+        """
+        Execute query and return all results.
+        
+        Args:
+            query: SQL query
+            params: Query parameters
+            
+        Returns:
+            List of rows
+        """
         try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM notebooks WHERE is_default = 1 LIMIT 1")
-                row = cursor.fetchone()
-                if row:
-                    return Notebook.from_dict(dict(row))
-            return None
+            cursor = self.connection.cursor()
+            cursor.execute(query, params)
+            return cursor.fetchall()
         except Exception as e:
-            logger.error(f"Failed to get default notebook: {e}")
-            return None
-    
-    def get_all_notebooks(self) -> List[Notebook]:
-        """Get all notebooks."""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM notebooks ORDER BY sort_order, name")
-                rows = cursor.fetchall()
-                return [Notebook.from_dict(dict(row)) for row in rows]
-        except Exception as e:
-            logger.error(f"Failed to get notebooks: {e}")
+            logger.error(f"Query failed: {e}\nQuery: {query}\nParams: {params}")
             return []
     
-    def update_notebook(self, notebook: Notebook) -> bool:
-        """Update notebook."""
+    def execute_many(self, query: str, params_list: List[Tuple]) -> bool:
+        """
+        Execute the same query multiple times with different parameters.
+        
+        Args:
+            query: SQL query
+            params_list: List of parameter tuples
+            
+        Returns:
+            Success status
+        """
         try:
-            notebook.updated_at = datetime.now()
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                data = notebook.to_dict()
-                cursor.execute("""
-                    UPDATE notebooks SET
-                        name=?, icon=?, color=?, description=?, parent_id=?,
-                        sort_order=?, is_default=?, updated_at=?,
-                        default_view=?, sort_by=?
-                    WHERE id=?
-                """, (
-                    data['name'], data['icon'], data['color'], data['description'],
-                    data['parent_id'], data['sort_order'], data['is_default'],
-                    data['updated_at'], data['default_view'], data['sort_by'],
-                    data['id']
-                ))
-            logger.info(f"Notebook updated: {notebook.name}")
+            cursor = self.connection.cursor()
+            cursor.executemany(query, params_list)
+            self.connection.commit()
             return True
         except Exception as e:
-            logger.error(f"Failed to update notebook: {e}")
+            logger.error(f"Batch execution failed: {e}")
+            self.connection.rollback()
             return False
     
-    def delete_notebook(self, notebook_id: str) -> bool:
-        """Delete notebook."""
+    def table_exists(self, table_name: str) -> bool:
+        """Check if a table exists."""
+        result = self.query_one("""
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name=?
+        """, (table_name,))
+        return result is not None
+    
+    def get_table_info(self, table_name: str) -> List[sqlite3.Row]:
+        """Get table schema information."""
+        return self.query_all(f"PRAGMA table_info({table_name})")
+    
+    def vacuum(self):
+        """Optimize database (reclaim space)."""
         try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM notebooks WHERE id = ?", (notebook_id,))
-            logger.info(f"Notebook deleted: {notebook_id}")
+            self.connection.execute("VACUUM")
+            logger.info("Database vacuumed")
+        except Exception as e:
+            logger.error(f"Vacuum failed: {e}")
+    
+    def backup(self, backup_path: Path) -> bool:
+        """
+        Create a backup of the database.
+        
+        Args:
+            backup_path: Path to backup file
+            
+        Returns:
+            Success status
+        """
+        try:
+            backup_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Create backup connection
+            backup_conn = sqlite3.connect(str(backup_path))
+            
+            # Copy database
+            with backup_conn:
+                self.connection.backup(backup_conn)
+            
+            backup_conn.close()
+            logger.info(f"Database backed up to: {backup_path}")
             return True
+            
         except Exception as e:
-            logger.error(f"Failed to delete notebook: {e}")
+            logger.error(f"Backup failed: {e}")
             return False
     
-    def create_note(self, note: Note) -> bool:
-        """Create note."""
+    def restore(self, backup_path: Path) -> bool:
+        """
+        Restore database from backup.
+        
+        Args:
+            backup_path: Path to backup file
+            
+        Returns:
+            Success status
+        """
         try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                data = note.to_dict()
-                cursor.execute("""
-                    INSERT INTO notes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, tuple(data.values()))
-            logger.info(f"Note created: {note.id}")
+            if not backup_path.exists():
+                logger.error(f"Backup file not found: {backup_path}")
+                return False
+            
+            # Close current connection
+            self.close()
+            
+            # Replace database file
+            import shutil
+            shutil.copy2(backup_path, self.db_path)
+            
+            # Reconnect
+            self.connect()
+            logger.info(f"Database restored from: {backup_path}")
             return True
+            
         except Exception as e:
-            logger.error(f"Failed to create note: {e}")
+            logger.error(f"Restore failed: {e}")
             return False
     
-    def get_note(self, note_id: str) -> Optional[Note]:
-        """Get note by ID."""
+    def get_stats(self) -> dict:
+        """Get database statistics."""
         try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM notes WHERE id = ?", (note_id,))
-                row = cursor.fetchone()
-                if row:
-                    return Note.from_dict(dict(row))
-            return None
+            stats = {}
+            
+            # Note counts
+            result = self.query_one("SELECT COUNT(*) as count FROM notes WHERE is_trashed = 0")
+            stats['total_notes'] = result['count'] if result else 0
+            
+            result = self.query_one("SELECT COUNT(*) as count FROM notes WHERE is_favorite = 1")
+            stats['favorite_notes'] = result['count'] if result else 0
+            
+            result = self.query_one("SELECT COUNT(*) as count FROM notes WHERE is_trashed = 1")
+            stats['trashed_notes'] = result['count'] if result else 0
+            
+            # Notebook count
+            result = self.query_one("SELECT COUNT(*) as count FROM notebooks")
+            stats['total_notebooks'] = result['count'] if result else 0
+            
+            # Tag count
+            result = self.query_one("SELECT COUNT(*) as count FROM tags")
+            stats['total_tags'] = result['count'] if result else 0
+            
+            # Database size
+            import os
+            if self.db_path.exists():
+                stats['db_size_bytes'] = os.path.getsize(self.db_path)
+                stats['db_size_mb'] = stats['db_size_bytes'] / (1024 * 1024)
+            
+            return stats
+            
         except Exception as e:
-            logger.error(f"Failed to get note: {e}")
-            return None
+            logger.error(f"Failed to get stats: {e}")
+            return {}
     
-    def get_all_notes(self, include_deleted: bool = False) -> List[Note]:
-        """Get all notes."""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                if include_deleted:
-                    cursor.execute("SELECT * FROM notes ORDER BY updated_at DESC")
-                else:
-                    cursor.execute("SELECT * FROM notes WHERE deleted_at IS NULL ORDER BY updated_at DESC")
-                rows = cursor.fetchall()
-                return [Note.from_dict(dict(row)) for row in rows]
-        except Exception as e:
-            logger.error(f"Failed to get notes: {e}")
-            return []
+    def close(self):
+        """Close database connection."""
+        if self.connection:
+            self.connection.close()
+            self.connection = None
+            logger.debug("Database connection closed")
     
-    def get_notes_by_notebook(self, notebook_id: str, include_deleted: bool = False) -> List[Note]:
-        """Get notes by notebook."""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                if include_deleted:
-                    cursor.execute(
-                        "SELECT * FROM notes WHERE notebook_id = ? ORDER BY updated_at DESC",
-                        (notebook_id,)
-                    )
-                else:
-                    cursor.execute(
-                        "SELECT * FROM notes WHERE notebook_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC",
-                        (notebook_id,)
-                    )
-                rows = cursor.fetchall()
-                return [Note.from_dict(dict(row)) for row in rows]
-        except Exception as e:
-            logger.error(f"Failed to get notes: {e}")
-            return []
-    
-    def get_favorite_notes(self) -> List[Note]:
-        """Get favorite notes."""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT * FROM notes WHERE is_favorite = 1 AND deleted_at IS NULL ORDER BY updated_at DESC"
-                )
-                rows = cursor.fetchall()
-                return [Note.from_dict(dict(row)) for row in rows]
-        except Exception as e:
-            logger.error(f"Failed to get favorites: {e}")
-            return []
-    
-    def get_deleted_notes(self) -> List[Note]:
-        """Get deleted notes."""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM notes WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC")
-                rows = cursor.fetchall()
-                return [Note.from_dict(dict(row)) for row in rows]
-        except Exception as e:
-            logger.error(f"Failed to get deleted notes: {e}")
-            return []
-    
-    def update_note(self, note: Note) -> bool:
-        """Update note."""
-        try:
-            note.updated_at = datetime.now()
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                data = note.to_dict()
-                cursor.execute("""
-                    UPDATE notes SET
-                        title=?, content=?, content_encrypted=?, notebook_id=?,
-                        tags=?, is_favorite=?, is_encrypted=?, updated_at=?,
-                        deleted_at=?, word_count=?, char_count=?,
-                        has_images=?, has_checkboxes=?
-                    WHERE id=?
-                """, (
-                    data['title'], data['content'], data['content_encrypted'],
-                    data['notebook_id'], data['tags'], data['is_favorite'],
-                    data['is_encrypted'], data['updated_at'], data['deleted_at'],
-                    data['word_count'], data['char_count'], data['has_images'],
-                    data['has_checkboxes'], data['id']
-                ))
-            logger.info(f"Note updated: {note.id}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to update note: {e}")
-            return False
-    
-    def delete_note(self, note_id: str, permanent: bool = False) -> bool:
-        """Delete note."""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                if permanent:
-                    cursor.execute("DELETE FROM notes WHERE id = ?", (note_id,))
-                    logger.info(f"Note permanently deleted: {note_id}")
-                else:
-                    cursor.execute(
-                        "UPDATE notes SET deleted_at = ? WHERE id = ?",
-                        (datetime.now().isoformat(), note_id)
-                    )
-                    logger.info(f"Note moved to trash: {note_id}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to delete note: {e}")
-            return False
-    
-    def restore_note(self, note_id: str) -> bool:
-        """Restore note from trash."""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("UPDATE notes SET deleted_at = NULL WHERE id = ?", (note_id,))
-            logger.info(f"Note restored: {note_id}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to restore note: {e}")
-            return False
-    
-    def search_notes(self, query: str) -> List[Note]:
-        """Search notes by title, content, or tags."""
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                search_pattern = f"%{query}%"
-                cursor.execute("""
-                    SELECT * FROM notes
-                    WHERE (title LIKE ? OR content LIKE ? OR tags LIKE ?)
-                    AND deleted_at IS NULL
-                    ORDER BY updated_at DESC
-                """, (search_pattern, search_pattern, search_pattern))
-                rows = cursor.fetchall()
-                return [Note.from_dict(dict(row)) for row in rows]
-        except Exception as e:
-            logger.error(f"Failed to search notes: {e}")
-            return []
+    def __del__(self):
+        """Cleanup on deletion."""
+        self.close()

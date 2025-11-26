@@ -1,5 +1,5 @@
 """Professional main window with theme support - COMPLETE VERSION."""
-import logging
+import logging  # Add this missing import
 from datetime import datetime
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                               QSplitter, QStatusBar, QToolBar, QLabel, QMessageBox,
