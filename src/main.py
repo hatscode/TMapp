@@ -1,12 +1,20 @@
-from gui.main_window import MainWindow
-import sys
-from PyQt5.QtWidgets import QApplication
+#!/usr/bin/env python3
+"""TMapp - Secure Note-Taking Application Entry Point"""
 
-def main():
-    app = QApplication(sys.argv)
-    main_window = MainWindow()
-    main_window.show()
-    sys.exit(app.exec_())
+import sys
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+from src.app import main
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
