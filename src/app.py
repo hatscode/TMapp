@@ -1,29 +1,25 @@
+"""Main application entry point with authentication."""
 import sys
 import logging
+from pathlib import Path
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import Qt
 
 from src.core.config import AppConfig
 from src.core.encryption import EncryptionService
 from src.core.database import Database
+from src.core.auth_manager import AuthenticationManager
 from src.controllers.note_controller import NoteController
 from src.controllers.notebook_controller import NotebookController
 from src.ui.first_run_wizard import FirstRunWizard
+from src.ui.auth_dialog import AuthenticationDialog
 from src.ui.main_window import MainWindow
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
-)
 logger = logging.getLogger(__name__)
 
 
 class TMApp:
-    """Main application class."""
+    """Main TMapp application with authentication."""
     
     def __init__(self):
         """Initialize the application."""
@@ -41,25 +37,41 @@ class TMApp:
         self.encryption_service = EncryptionService()
         self.database = Database(self.config.db_file)
         
+        # Initialize authentication manager
+        self.auth_manager = AuthenticationManager(self.config.app_dir)
+        
         # Initialize controllers
         self.note_controller = NoteController(self.database, self.encryption_service)
         self.notebook_controller = NotebookController(self.database)
         
         self.main_window = None
+        self.is_authenticated = False
         
         logger.info("TMapp initialized")
     
     def run(self):
-        """Run the application."""
+        """Run the application with authentication flow."""
         try:
-            if self.config.is_first_run():
+            # Check if first run
+            if self.auth_manager.is_first_run():
                 logger.info("First run detected, showing setup wizard")
-                self._show_first_run_wizard()
-            else:
-                logger.info("Showing main window")
-                self._show_main_window()
+                if not self._show_first_run_wizard():
+                    logger.info("First-run wizard cancelled, exiting")
+                    return 0
             
-            return self.app.exec()
+            # Always show authentication dialog on launch
+            logger.info("Showing authentication dialog")
+            if not self._show_authentication_dialog():
+                logger.info("Authentication cancelled, exiting")
+                return 0
+            
+            # If authenticated, show main window
+            if self.is_authenticated:
+                logger.info("Authentication successful, showing main window")
+                self._show_main_window()
+                return self.app.exec()
+            else:
+                return 0
         
         except Exception as e:
             logger.error(f"Application error: {e}", exc_info=True)
@@ -70,52 +82,60 @@ class TMApp:
             )
             return 1
     
-    def _show_first_run_wizard(self):
+    def _show_first_run_wizard(self) -> bool:
         """Show the first-run setup wizard."""
         wizard = FirstRunWizard()
-        wizard.wizard_completed.connect(self._on_wizard_completed)
         
         if wizard.exec() == wizard.DialogCode.Accepted:
-            logger.info("First-run wizard completed")
-        else:
-            logger.info("First-run wizard cancelled, exiting")
-            sys.exit(0)
-    
-    def _on_wizard_completed(self, password: str):
-        """Handle wizard completion."""
-        try:
-            # Cache the master password
-            salt = self.encryption_service.cache_key(password)
+            password = wizard.field("password")
             
-            # Store salt in config (salt is not sensitive)
-            self.config.set("password_salt", salt.hex())
-            self.config.mark_initialized()
+            # Setup master password
+            success, message = self.auth_manager.setup_master_password(password)
             
-            logger.info("Master password configured")
-            
-            # Show success message
-            QMessageBox.information(
-                None,
-                "Setup Complete",
-                "Your master password has been created successfully!\n\n"
-                "⚠️ IMPORTANT: Store your password in a safe place. "
-                "If you forget it, your notes cannot be recovered."
-            )
-            
-            # Show main window
-            self._show_main_window()
+            if success:
+                logger.info("Master password configured")
+                QMessageBox.information(
+                    None,
+                    "Setup Complete",
+                    "Your master password has been created successfully!\n\n"
+                    "⚠️ IMPORTANT: Store your password in a safe place. "
+                    "If you forget it, your notes cannot be recovered."
+                )
+                return True
+            else:
+                logger.error(f"Failed to setup password: {message}")
+                QMessageBox.critical(
+                    None,
+                    "Setup Error",
+                    f"Failed to setup master password:\n{message}"
+                )
+                return False
         
-        except Exception as e:
-            logger.error(f"Failed to complete setup: {e}")
-            QMessageBox.critical(
-                None,
-                "Setup Error",
-                f"Failed to complete setup:\n{str(e)}"
-            )
-            sys.exit(1)
+        return False
+    
+    def _show_authentication_dialog(self) -> bool:
+        """Show authentication dialog and wait for success."""
+        auth_dialog = AuthenticationDialog(self.auth_manager)
+        
+        def on_auth_success(encryption_key: bytes):
+            """Handle successful authentication."""
+            self.is_authenticated = True
+            # Cache the encryption key in encryption service
+            self.encryption_service._cached_key = encryption_key
+            self.encryption_service._cached_salt = self.auth_manager.get_stored_salt()
+            logger.info("Encryption key cached for session")
+        
+        auth_dialog.authentication_successful.connect(on_auth_success)
+        
+        result = auth_dialog.exec()
+        
+        if result == auth_dialog.DialogCode.Accepted and self.is_authenticated:
+            return True
+        
+        return False
     
     def _show_main_window(self):
-        """Show the main application window."""
+        """Show main application window after authentication."""
         self.main_window = MainWindow(
             self.config,
             self.encryption_service,
@@ -128,6 +148,13 @@ class TMApp:
 
 def main():
     """Application entry point."""
+    # Setup logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    # Run application
     app = TMApp()
     sys.exit(app.run())
 

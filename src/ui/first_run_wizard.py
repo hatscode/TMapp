@@ -1,168 +1,291 @@
-from PyQt6.QtWidgets import (QWizard, QWizardPage, QVBoxLayout, QHBoxLayout,
-                              QLabel, QLineEdit, QPushButton, QTextEdit, 
-                              QCheckBox, QProgressBar, QFrame)
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QIcon
+"""First-run wizard for TMapp password setup."""
 import logging
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
+                              QLineEdit, QPushButton, QCheckBox, QProgressBar, 
+                              QFrame, QWidget, QGridLayout)
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QFont
 
 logger = logging.getLogger(__name__)
 
-class WelcomePage(QWizardPage):
-    """Welcome page of the setup wizard."""
+
+class FirstRunWizard(QDialog):
+    """
+    Single-window password setup dialog for first-time users.
+    Creates master password with comprehensive security requirements.
+    """
     
-    def __init__(self):
-        super().__init__()
-        self.setTitle("Welcome to TMapp")
-        self.setSubTitle("Secure, encrypted note-taking for your peace of mind")
+    wizard_completed = pyqtSignal(str)  # Emits master password
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
         
-        layout = QVBoxLayout()
+        self.password_valid = False
+        self.requirements_met = {
+            'length': False,
+            'uppercase': False,
+            'lowercase': False,
+            'digit': False,
+            'special': False
+        }
         
-        # Welcome message
-        welcome_text = QLabel(
-            "<h2>🔐 Welcome to TMapp</h2>"
-            "<p>TMapp is a secure, privacy-focused note-taking application that uses "
-            "military-grade encryption to protect your notes.</p>"
-            "<p><b>Key Features:</b></p>"
-            "<ul>"
-            "<li>🔒 AES-256-GCM encryption for all your notes</li>"
-            "<li>🛡️ Argon2id password hashing (OWASP recommended)</li>"
-            "<li>📝 Markdown support with live preview</li>"
-            "<li>🏷️ Tags and notebooks for organization</li>"
-            "<li>🔍 Powerful search across all notes</li>"
-            "<li>💾 Automatic encrypted backups</li>"
-            "</ul>"
-            "<p>Let's get started by creating your master password!</p>"
+        self._setup_ui()
+        self._apply_theme()
+        
+        # Make dialog modal
+        self.setModal(True)
+        self.setWindowFlags(
+            Qt.WindowType.Dialog | 
+            Qt.WindowType.CustomizeWindowHint | 
+            Qt.WindowType.WindowTitleHint
         )
-        welcome_text.setWordWrap(True)
-        layout.addWidget(welcome_text)
         
-        layout.addStretch()
-        self.setLayout(layout)
-
-
-class SecurityExplanationPage(QWizardPage):
-    """Explain the security model."""
+        # Disable close button - user must complete setup
+        self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
+        
+        logger.info("First-run wizard initialized")
     
-    def __init__(self):
-        super().__init__()
-        self.setTitle("Understanding TMapp Security")
-        self.setSubTitle("How we protect your data")
+    def _setup_ui(self):
+        """Create the password setup UI."""
+        self.setWindowTitle("TMapp - Setup")
+        self.setMinimumSize(550, 580)
+        self.setMaximumSize(550, 580)
         
-        layout = QVBoxLayout()
+        main_layout = QVBoxLayout()
+        main_layout.setSpacing(16)
+        main_layout.setContentsMargins(40, 30, 40, 30)
         
-        # Security explanation
-        security_text = QTextEdit()
-        security_text.setReadOnly(True)
-        security_text.setHtml(
-            "<h3>🛡️ Your Security, Explained</h3>"
-            "<p><b>Master Password:</b> Your master password is the key to all your encrypted notes. "
-            "We use Argon2id, a state-of-the-art password hashing algorithm, to derive your encryption key.</p>"
-            
-            "<p><b>Encryption:</b> All notes are encrypted using AES-256-GCM, the same encryption "
-            "used by governments and militaries worldwide. Each note has a unique encryption key.</p>"
-            
-            "<p><b>Zero-Knowledge:</b> Your password never leaves your device. We cannot recover "
-            "your password or access your notes. This means:</p>"
-            "<ul>"
-            "<li>✅ Maximum security and privacy</li>"
-            "<li>⚠️ If you forget your password, your notes cannot be recovered</li>"
-            "</ul>"
-            
-            "<p><b>Best Practices:</b></p>"
-            "<ul>"
-            "<li>Use a strong, unique password (12+ characters)</li>"
-            "<li>Include uppercase, lowercase, numbers, and symbols</li>"
-            "<li>Don't reuse passwords from other services</li>"
-            "<li>Consider using a password manager</li>"
-            "<li>Store a backup of your password in a secure location</li>"
-            "</ul>"
-            
-            "<p><b>Auto-Lock:</b> TMapp automatically locks after a period of inactivity "
-            "(default: 5 minutes) to protect your notes if you step away.</p>"
-        )
-        layout.addWidget(security_text)
+        # ===== HEADER =====
+        # Logo/Icon
+        logo = QLabel("🔐")
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo.setStyleSheet("font-size: 56px; margin: 8px;")
         
-        self.setLayout(layout)
-
-
-class PasswordCreationPage(QWizardPage):
-    """Page for creating master password."""
-    
-    def __init__(self):
-        super().__init__()
-        self.setTitle("Create Your Master Password")
-        self.setSubTitle("Choose a strong password to protect your notes")
+        # Title
+        title = QLabel("Welcome to TMapp")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
         
-        layout = QVBoxLayout()
+        # Subtitle
+        subtitle = QLabel("Create your master password to secure your notes")
+        subtitle.setObjectName("subtitle")
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle.setFont(QFont("Segoe UI", 11))
+        subtitle.setWordWrap(True)
         
-        # Password input
+        # Separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        separator.setObjectName("separator")
+        
+        # ===== PASSWORD INPUT =====
         password_label = QLabel("Master Password:")
+        password_label.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        
+        password_container = QHBoxLayout()
+        password_container.setSpacing(8)
+        
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setPlaceholderText("Enter a strong password")
+        self.password_input.setPlaceholderText("Enter password (12+ characters)")
+        self.password_input.setFont(QFont("Segoe UI", 12))
+        self.password_input.setMinimumHeight(44)
         self.password_input.textChanged.connect(self._validate_password)
         
-        # Confirm password
-        confirm_label = QLabel("Confirm Password:")
-        self.confirm_input = QLineEdit()
-        self.confirm_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.confirm_input.setPlaceholderText("Re-enter your password")
-        self.confirm_input.textChanged.connect(self._validate_password)
+        self.toggle_password_btn = QPushButton("👁️")
+        self.toggle_password_btn.setObjectName("toggle_btn")
+        self.toggle_password_btn.setFixedSize(44, 44)
+        self.toggle_password_btn.setToolTip("Show/hide password")
+        self.toggle_password_btn.clicked.connect(self._toggle_password_visibility)
         
-        # Show password checkbox
-        self.show_password_cb = QCheckBox("Show password")
-        self.show_password_cb.stateChanged.connect(self._toggle_password_visibility)
+        password_container.addWidget(self.password_input)
+        password_container.addWidget(self.toggle_password_btn)
         
-        # Password strength indicator
+        # ===== PASSWORD STRENGTH =====
+        strength_layout = QHBoxLayout()
+        
         self.strength_bar = QProgressBar()
         self.strength_bar.setMaximum(100)
         self.strength_bar.setValue(0)
-        self.strength_label = QLabel("Password strength: ")
+        self.strength_bar.setTextVisible(False)
+        self.strength_bar.setMaximumHeight(6)
         
-        # Validation message
-        self.validation_label = QLabel("")
-        self.validation_label.setWordWrap(True)
-        self.validation_label.setStyleSheet("color: #e74c3c;")
+        self.strength_text = QLabel("Weak")
+        self.strength_text.setObjectName("strength_text")
+        self.strength_text.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        self.strength_text.setMinimumWidth(70)
         
-        # Add widgets
-        layout.addWidget(password_label)
-        layout.addWidget(self.password_input)
-        layout.addWidget(confirm_label)
-        layout.addWidget(self.confirm_input)
-        layout.addWidget(self.show_password_cb)
-        layout.addSpacing(10)
-        layout.addWidget(self.strength_label)
-        layout.addWidget(self.strength_bar)
-        layout.addWidget(self.validation_label)
-        layout.addStretch()
+        strength_layout.addWidget(self.strength_bar, 1)
+        strength_layout.addWidget(self.strength_text)
         
-        self.setLayout(layout)
+        # ===== REQUIREMENTS CHECKLIST =====
+        requirements_grid = QGridLayout()
+        requirements_grid.setSpacing(6)
+        requirements_grid.setContentsMargins(0, 0, 0, 0)
         
-        # Register fields for wizard
-        self.registerField("password*", self.password_input)
+        self.req_length = self._create_requirement_label("12+ characters")
+        self.req_uppercase = self._create_requirement_label("Uppercase")
+        self.req_lowercase = self._create_requirement_label("Lowercase")
+        self.req_digit = self._create_requirement_label("Numbers")
+        self.req_special = self._create_requirement_label("Special (!@#$)")
+        
+        # Add to grid (row, column)
+        requirements_grid.addWidget(self.req_length, 0, 0)
+        requirements_grid.addWidget(self.req_digit, 0, 1)
+        requirements_grid.addWidget(self.req_uppercase, 1, 0)
+        requirements_grid.addWidget(self.req_special, 1, 1)
+        requirements_grid.addWidget(self.req_lowercase, 2, 0)
+        
+        # ===== CONFIRM PASSWORD =====
+        confirm_label = QLabel("Confirm Password:")
+        confirm_label.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        
+        confirm_container = QHBoxLayout()
+        confirm_container.setSpacing(8)
+        
+        self.confirm_input = QLineEdit()
+        self.confirm_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.confirm_input.setPlaceholderText("Re-enter password")
+        self.confirm_input.setFont(QFont("Segoe UI", 12))
+        self.confirm_input.setMinimumHeight(44)
+        self.confirm_input.textChanged.connect(self._validate_confirmation)
+        
+        self.toggle_confirm_btn = QPushButton("👁️")
+        self.toggle_confirm_btn.setObjectName("toggle_btn")
+        self.toggle_confirm_btn.setFixedSize(44, 44)
+        self.toggle_confirm_btn.setToolTip("Show/hide password")
+        self.toggle_confirm_btn.clicked.connect(self._toggle_confirm_visibility)
+        
+        confirm_container.addWidget(self.confirm_input)
+        confirm_container.addWidget(self.toggle_confirm_btn)
+        
+        # Match indicator
+        self.match_label = QLabel("")
+        self.match_label.setObjectName("match_label")
+        self.match_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.match_label.setFont(QFont("Segoe UI", 10))
+        
+        # ===== ACKNOWLEDGMENT =====
+        self.acknowledge_cb = QCheckBox("I understand this password cannot be recovered if lost")
+        self.acknowledge_cb.setFont(QFont("Segoe UI", 10))
+        self.acknowledge_cb.stateChanged.connect(self._update_continue_button)
+        
+        # ===== CONTINUE BUTTON =====
+        self.continue_btn = QPushButton("Continue")
+        self.continue_btn.setObjectName("continue_btn")
+        self.continue_btn.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        self.continue_btn.setMinimumHeight(44)
+        self.continue_btn.setEnabled(False)
+        self.continue_btn.clicked.connect(self._on_continue)
+        
+        # ===== ASSEMBLE LAYOUT =====
+        main_layout.addWidget(logo)
+        main_layout.addWidget(title)
+        main_layout.addWidget(subtitle)
+        main_layout.addWidget(separator)
+        main_layout.addSpacing(8)
+        main_layout.addWidget(password_label)
+        main_layout.addLayout(password_container)
+        main_layout.addLayout(strength_layout)
+        main_layout.addSpacing(4)
+        main_layout.addLayout(requirements_grid)
+        main_layout.addSpacing(12)
+        main_layout.addWidget(confirm_label)
+        main_layout.addLayout(confirm_container)
+        main_layout.addWidget(self.match_label)
+        main_layout.addSpacing(8)
+        main_layout.addWidget(self.acknowledge_cb)
+        main_layout.addSpacing(12)
+        main_layout.addWidget(self.continue_btn)
+        main_layout.addStretch()
+        
+        self.setLayout(main_layout)
     
-    def _toggle_password_visibility(self, state):
-        """Toggle password visibility."""
-        if state == Qt.CheckState.Checked.value:
-            self.password_input.setEchoMode(QLineEdit.EchoMode.Normal)
-            self.confirm_input.setEchoMode(QLineEdit.EchoMode.Normal)
+    def _create_requirement_label(self, text: str) -> QLabel:
+        """Create a requirement label with checkbox icon."""
+        label = QLabel(f"○ {text}")
+        label.setObjectName("requirement")
+        label.setFont(QFont("Segoe UI", 9))
+        label.setMinimumHeight(20)
+        return label
+    
+    def _validate_password(self, password: str):
+        """Validate password and update UI."""
+        # Check requirements
+        self.requirements_met['length'] = len(password) >= 12
+        self.requirements_met['uppercase'] = any(c.isupper() for c in password)
+        self.requirements_met['lowercase'] = any(c.islower() for c in password)
+        self.requirements_met['digit'] = any(c.isdigit() for c in password)
+        self.requirements_met['special'] = any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?/~`" for c in password)
+        
+        # Update requirement labels
+        self._update_requirement_label(self.req_length, self.requirements_met['length'])
+        self._update_requirement_label(self.req_uppercase, self.requirements_met['uppercase'])
+        self._update_requirement_label(self.req_lowercase, self.requirements_met['lowercase'])
+        self._update_requirement_label(self.req_digit, self.requirements_met['digit'])
+        self._update_requirement_label(self.req_special, self.requirements_met['special'])
+        
+        # Calculate strength
+        strength = self._calculate_strength(password)
+        self.strength_bar.setValue(strength)
+        
+        # Update strength indicator
+        if strength < 40:
+            self.strength_text.setText("Weak")
+            self.strength_text.setStyleSheet("color: #DC2626;")
+            self.strength_bar.setStyleSheet("QProgressBar::chunk { background-color: #DC2626; }")
+        elif strength < 60:
+            self.strength_text.setText("Fair")
+            self.strength_text.setStyleSheet("color: #F59E0B;")
+            self.strength_bar.setStyleSheet("QProgressBar::chunk { background-color: #F59E0B; }")
+        elif strength < 80:
+            self.strength_text.setText("Good")
+            self.strength_text.setStyleSheet("color: #FBBF24;")
+            self.strength_bar.setStyleSheet("QProgressBar::chunk { background-color: #FBBF24; }")
+        elif strength < 90:
+            self.strength_text.setText("Strong")
+            self.strength_text.setStyleSheet("color: #10B981;")
+            self.strength_bar.setStyleSheet("QProgressBar::chunk { background-color: #10B981; }")
         else:
-            self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-            self.confirm_input.setEchoMode(QLineEdit.EchoMode.Password)
+            self.strength_text.setText("Excellent")
+            self.strength_text.setStyleSheet("color: #3B82F6;")
+            self.strength_bar.setStyleSheet("QProgressBar::chunk { background-color: #3B82F6; }")
+        
+        # Check if all requirements met
+        self.password_valid = all(self.requirements_met.values())
+        
+        # Validate confirmation
+        self._validate_confirmation(self.confirm_input.text())
+        
+        # Update continue button
+        self._update_continue_button()
     
-    def _calculate_password_strength(self, password: str) -> int:
+    def _update_requirement_label(self, label: QLabel, met: bool):
+        """Update requirement label appearance."""
+        text = label.text()[2:]  # Remove icon
+        if met:
+            label.setText(f"✓ {text}")
+            label.setStyleSheet("color: #10B981;")
+        else:
+            label.setText(f"○ {text}")
+            label.setStyleSheet("color: #6B7280;")
+    
+    def _calculate_strength(self, password: str) -> int:
         """Calculate password strength (0-100)."""
         if not password:
             return 0
         
         strength = 0
         
-        # Length
+        # Length scoring
         if len(password) >= 8:
-            strength += 20
+            strength += 15
         if len(password) >= 12:
             strength += 20
         if len(password) >= 16:
+            strength += 15
+        if len(password) >= 20:
             strength += 10
         
         # Character variety
@@ -171,129 +294,185 @@ class PasswordCreationPage(QWizardPage):
         if any(c.isupper() for c in password):
             strength += 10
         if any(c.isdigit() for c in password):
-            strength += 15
+            strength += 10
         if any(not c.isalnum() for c in password):
-            strength += 15
+            strength += 10
         
         return min(strength, 100)
     
-    def _validate_password(self):
-        """Validate password and update UI."""
+    def _validate_confirmation(self, confirm_password: str):
+        """Validate password confirmation."""
         password = self.password_input.text()
-        confirm = self.confirm_input.text()
         
-        # Calculate strength
-        strength = self._calculate_password_strength(password)
-        self.strength_bar.setValue(strength)
+        if not confirm_password:
+            self.match_label.setText("")
+            return
         
-        # Update strength label
-        if strength < 40:
-            self.strength_label.setText("Password strength: Weak")
-            self.strength_bar.setStyleSheet("QProgressBar::chunk { background-color: #e74c3c; }")
-        elif strength < 70:
-            self.strength_label.setText("Password strength: Moderate")
-            self.strength_bar.setStyleSheet("QProgressBar::chunk { background-color: #f39c12; }")
+        if password == confirm_password:
+            self.match_label.setText("✓ Passwords match")
+            self.match_label.setStyleSheet("color: #10B981;")
         else:
-            self.strength_label.setText("Password strength: Strong")
-            self.strength_bar.setStyleSheet("QProgressBar::chunk { background-color: #27ae60; }")
+            self.match_label.setText("✗ Passwords do not match")
+            self.match_label.setStyleSheet("color: #DC2626;")
         
-        # Validate
-        if not password:
-            self.validation_label.setText("")
-            return False
-        
-        if len(password) < 8:
-            self.validation_label.setText("⚠️ Password must be at least 8 characters")
-            return False
-        
-        if confirm and password != confirm:
-            self.validation_label.setText("⚠️ Passwords do not match")
-            return False
-        
-        self.validation_label.setText("✓ Password is valid")
-        self.validation_label.setStyleSheet("color: #27ae60;")
-        return True
+        self._update_continue_button()
     
-    def validatePage(self):
-        """Validate before moving to next page."""
+    def _update_continue_button(self):
+        """Update continue button enabled state."""
         password = self.password_input.text()
         confirm = self.confirm_input.text()
         
-        if len(password) < 8:
-            self.validation_label.setText("⚠️ Password must be at least 8 characters")
-            return False
-        
-        if password != confirm:
-            self.validation_label.setText("⚠️ Passwords do not match")
-            return False
-        
-        return True
-
-
-class CompletionPage(QWizardPage):
-    """Final completion page."""
-    
-    def __init__(self):
-        super().__init__()
-        self.setTitle("Setup Complete!")
-        self.setSubTitle("You're ready to start using TMapp")
-        
-        layout = QVBoxLayout()
-        
-        completion_text = QLabel(
-            "<h2>✅ All Set!</h2>"
-            "<p>Your master password has been created and TMapp is ready to use.</p>"
-            "<p><b>Quick Tips:</b></p>"
-            "<ul>"
-            "<li><b>Ctrl+N</b> - Create a new note</li>"
-            "<li><b>Ctrl+K</b> - Quick search</li>"
-            "<li><b>Ctrl+L</b> - Lock application</li>"
-            "<li><b>Ctrl+B</b> - Bold text</li>"
-            "<li><b>Ctrl+I</b> - Italic text</li>"
-            "</ul>"
-            "<p>Click <b>Finish</b> to start using TMapp!</p>"
+        can_continue = (
+            self.password_valid and 
+            password == confirm and 
+            len(confirm) > 0 and
+            self.acknowledge_cb.isChecked()
         )
-        completion_text.setWordWrap(True)
-        layout.addWidget(completion_text)
         
-        layout.addStretch()
-        self.setLayout(layout)
-
-
-class FirstRunWizard(QWizard):
-    """First-run setup wizard."""
+        self.continue_btn.setEnabled(can_continue)
     
-    wizard_completed = pyqtSignal(str)  # Emits master password
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        
-        self.setWindowTitle("TMapp Setup Wizard")
-        self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
-        self.setOption(QWizard.WizardOption.NoBackButtonOnStartPage)
-        self.setMinimumSize(600, 500)
-        
-        # Add pages
-        self.welcome_page = WelcomePage()
-        self.security_page = SecurityExplanationPage()
-        self.password_page = PasswordCreationPage()
-        self.completion_page = CompletionPage()
-        
-        self.addPage(self.welcome_page)
-        self.addPage(self.security_page)
-        self.addPage(self.password_page)
-        self.addPage(self.completion_page)
-        
-        # Connect signals
-        self.finished.connect(self._on_finished)
-        
-        logger.info("First-run wizard initialized")
-    
-    def _on_finished(self, result):
-        """Handle wizard completion."""
-        if result == QWizard.DialogCode.Accepted:
-            password = self.field("password")
-            logger.info("First-run wizard completed successfully")
-            self.wizard_completed.emit(password)
+    def _toggle_password_visibility(self):
+        """Toggle master password visibility."""
+        if self.password_input.echoMode() == QLineEdit.EchoMode.Password:
+            self.password_input.setEchoMode(QLineEdit.EchoMode.Normal)
         else:
-            logger.info("First-run wizard cancelled")
+            self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+    
+    def _toggle_confirm_visibility(self):
+        """Toggle confirm password visibility."""
+        if self.confirm_input.echoMode() == QLineEdit.EchoMode.Password:
+            self.confirm_input.setEchoMode(QLineEdit.EchoMode.Normal)
+        else:
+            self.confirm_input.setEchoMode(QLineEdit.EchoMode.Password)
+    
+    def _on_continue(self):
+        """Handle continue button click."""
+        password = self.password_input.text()
+        
+        # Final validation
+        if not self.password_valid:
+            return
+        
+        if password != self.confirm_input.text():
+            return
+        
+        if not self.acknowledge_cb.isChecked():
+            return
+        
+        logger.info("Password setup completed")
+        self.wizard_completed.emit(password)
+        self.accept()
+    
+    def closeEvent(self, event):
+        """Prevent closing dialog without completing setup."""
+        event.ignore()
+    
+    def field(self, name: str) -> str:
+        """Get field value (for compatibility with QWizard API)."""
+        if name == "password":
+            return self.password_input.text()
+        return ""
+    
+    def _apply_theme(self):
+        """Apply dark theme to wizard."""
+        stylesheet = """
+        QDialog {
+            background-color: #0D1117;
+        }
+        
+        QLabel {
+            color: #F0F6FC;
+        }
+        
+        QLabel#subtitle {
+            color: #8B949E;
+        }
+        
+        QLabel#requirement {
+            padding: 2px 8px;
+        }
+        
+        QLabel#match_label {
+            padding: 4px;
+            margin-top: 4px;
+        }
+        
+        QFrame#separator {
+            color: #30363D;
+        }
+        
+        QLineEdit {
+            background-color: #161B22;
+            color: #F0F6FC;
+            border: 2px solid #30363D;
+            border-radius: 8px;
+            padding: 10px 14px;
+        }
+        
+        QLineEdit:focus {
+            border-color: #2563EB;
+        }
+        
+        QPushButton#toggle_btn {
+            background-color: #161B22;
+            border: 2px solid #30363D;
+            border-radius: 8px;
+            font-size: 20px;
+        }
+        
+        QPushButton#toggle_btn:hover {
+            background-color: #21262D;
+            border-color: #2563EB;
+        }
+        
+        QProgressBar {
+            border: 1px solid #30363D;
+            border-radius: 3px;
+            background-color: #161B22;
+        }
+        
+        QProgressBar::chunk {
+            border-radius: 2px;
+        }
+        
+        QCheckBox {
+            color: #F0F6FC;
+            spacing: 8px;
+        }
+        
+        QCheckBox::indicator {
+            width: 18px;
+            height: 18px;
+            border: 2px solid #30363D;
+            border-radius: 4px;
+            background-color: #161B22;
+        }
+        
+        QCheckBox::indicator:checked {
+            background-color: #2563EB;
+            border-color: #2563EB;
+        }
+        
+        QPushButton#continue_btn {
+            background-color: #2563EB;
+            color: #FFFFFF;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 32px;
+        }
+        
+        QPushButton#continue_btn:hover {
+            background-color: #3973f7;
+        }
+        
+        QPushButton#continue_btn:pressed {
+            background-color: #1746a2;
+        }
+        
+        QPushButton#continue_btn:disabled {
+            background-color: #2D333B;
+            color: #6E7681;
+        }
+        """
+        
+        self.setStyleSheet(stylesheet)

@@ -1,137 +1,143 @@
-# filepath: /home/wh1t3h4t/Desktop/TMapp/src/models/notebook.py
-from dataclasses import dataclass, field
+"""Complete note data model."""
+import uuid
+import re
+from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Optional
-from uuid import uuid4
 
-@dataclass
-class Notebook:
-    """Notebook data model."""
-    
-    id: str = field(default_factory=lambda: str(uuid4()))
-    name: str = ""
-    icon: str = "📓"
-    color: str = "#4A9EFF"
-    description: str = ""
-    parent_id: Optional[str] = None
-    sort_order: int = 0
-    is_default: bool = False
-    created_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now)
-    
-    # View preferences
-    default_view: str = "list"  # list or grid
-    sort_by: str = "updated_at"  # updated_at, created_at, title
-    
-    def to_dict(self) -> dict:
-        """Convert to dictionary."""
-        return {
-            'id': self.id,
-            'name': self.name,
-            'icon': self.icon,
-            'color': self.color,
-            'description': self.description,
-            'parent_id': self.parent_id,
-            'sort_order': self.sort_order,
-            'is_default': self.is_default,
-            'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat(),
-            'default_view': self.default_view,
-            'sort_by': self.sort_by,
-        }
-    
-    @classmethod
-    def from_dict(cls, data: dict) -> 'Notebook':
-        """Create from dictionary."""
-        return cls(
-            id=data['id'],
-            name=data.get('name', ''),
-            icon=data.get('icon', '📓'),
-            color=data.get('color', '#4A9EFF'),
-            description=data.get('description', ''),
-            parent_id=data.get('parent_id'),
-            sort_order=data.get('sort_order', 0),
-            is_default=data.get('is_default', False),
-            created_at=datetime.fromisoformat(data['created_at']),
-            updated_at=datetime.fromisoformat(data['updated_at']),
-            default_view=data.get('default_view', 'list'),
-            sort_by=data.get('sort_by', 'updated_at'),
-        )
-
-"""Note data model."""
 @dataclass
 class Note:
-    """Note data model."""
+    """Complete note data model with all fields."""
     
-    id: str = field(default_factory=lambda: str(uuid4()))
-    title: str = ""
-    content: str = ""
-    content_encrypted: bytes = b""
-    notebook_id: Optional[str] = None
-    tags: List[str] = field(default_factory=list)
-    is_favorite: bool = False
-    is_encrypted: bool = True
-    created_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now)
-    deleted_at: Optional[datetime] = None
+    id: str
+    title: str
+    content: str
+    notebook_id: Optional[str]
+    tags: List[str]
+    created_at: datetime
+    modified_at: datetime
+    is_favorite: bool
+    is_pinned: bool
+    is_archived: bool
+    is_trashed: bool
+    color: Optional[str]
+    
+    # Rich content
+    attachments: List[str]
+    images: List[str]
+    links: List[str]
+    
+    # Task management
+    has_tasks: bool
+    completed_tasks: int
+    total_tasks: int
     
     # Metadata
-    word_count: int = 0
-    char_count: int = 0
-    has_images: bool = False
-    has_checkboxes: bool = False
+    word_count: int
+    character_count: int
+    reading_time: int
     
-    def update_metadata(self):
-        """Update note metadata based on content."""
-        if self.content:
-            self.word_count = len(self.content.split())
-            self.char_count = len(self.content)
-            self.has_images = '![' in self.content
-            self.has_checkboxes = '- [ ]' in self.content or '- [x]' in self.content
-        self.updated_at = datetime.now()
+    # Encryption metadata
+    encrypted: bool
+    encryption_version: str
     
-    def is_deleted(self) -> bool:
-        """Check if note is in trash."""
-        return self.deleted_at is not None
+    @staticmethod
+    def create_new(title: str = "Untitled Note", notebook_id: Optional[str] = None) -> 'Note':
+        """Create a new note with default values."""
+        now = datetime.now()
+        return Note(
+            id=str(uuid.uuid4()),
+            title=title,
+            content="",
+            notebook_id=notebook_id,
+            tags=[],
+            created_at=now,
+            modified_at=now,
+            is_favorite=False,
+            is_pinned=False,
+            is_archived=False,
+            is_trashed=False,
+            color=None,
+            attachments=[],
+            images=[],
+            links=[],
+            has_tasks=False,
+            completed_tasks=0,
+            total_tasks=0,
+            word_count=0,
+            character_count=0,
+            reading_time=0,
+            encrypted=True,
+            encryption_version="1.0"
+        )
+    
+    def update_metadata(self, content: str):
+        """Update metadata based on content."""
+        self.word_count = len(content.split())
+        self.character_count = len(content)
+        self.reading_time = max(1, self.word_count // 200)  # Average reading speed
+        self.modified_at = datetime.now()
+        
+        # Detect tasks
+        task_pattern = r'\[ \]|\[x\]|\[X\]'
+        tasks = re.findall(task_pattern, content)
+        self.total_tasks = len(tasks)
+        self.completed_tasks = len([t for t in tasks if t.lower() == '[x]'])
+        self.has_tasks = self.total_tasks > 0
     
     def to_dict(self) -> dict:
-        """Convert to dictionary."""
+        """Convert to dictionary for storage."""
         return {
             'id': self.id,
             'title': self.title,
             'content': self.content,
-            'content_encrypted': self.content_encrypted,
             'notebook_id': self.notebook_id,
-            'tags': ','.join(self.tags) if self.tags else '',
-            'is_favorite': self.is_favorite,
-            'is_encrypted': self.is_encrypted,
+            'tags': ','.join(self.tags),
             'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat(),
-            'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None,
+            'modified_at': self.modified_at.isoformat(),
+            'is_favorite': int(self.is_favorite),
+            'is_pinned': int(self.is_pinned),
+            'is_archived': int(self.is_archived),
+            'is_trashed': int(self.is_trashed),
+            'color': self.color,
+            'attachments': ','.join(self.attachments),
+            'images': ','.join(self.images),
+            'links': ','.join(self.links),
+            'has_tasks': int(self.has_tasks),
+            'completed_tasks': self.completed_tasks,
+            'total_tasks': self.total_tasks,
             'word_count': self.word_count,
-            'char_count': self.char_count,
-            'has_images': self.has_images,
-            'has_checkboxes': self.has_checkboxes,
+            'character_count': self.character_count,
+            'reading_time': self.reading_time,
+            'encrypted': int(self.encrypted),
+            'encryption_version': self.encryption_version
         }
     
-    @classmethod
-    def from_dict(cls, data: dict) -> 'Note':
-        """Create from dictionary."""
-        tags = data.get('tags', '')
-        return cls(
+    @staticmethod
+    def from_dict(data: dict) -> 'Note':
+        """Create Note from dictionary."""
+        return Note(
             id=data['id'],
-            title=data.get('title', ''),
-            content=data.get('content', ''),
-            content_encrypted=data.get('content_encrypted', b''),
+            title=data['title'],
+            content=data['content'],
             notebook_id=data.get('notebook_id'),
-            tags=tags.split(',') if tags else [],
-            is_favorite=bool(data.get('is_favorite', False)),
-            is_encrypted=bool(data.get('is_encrypted', True)),
+            tags=data.get('tags', '').split(',') if data.get('tags') else [],
             created_at=datetime.fromisoformat(data['created_at']),
-            updated_at=datetime.fromisoformat(data['updated_at']),
-            deleted_at=datetime.fromisoformat(data['deleted_at']) if data.get('deleted_at') else None,
+            modified_at=datetime.fromisoformat(data['modified_at']),
+            is_favorite=bool(data.get('is_favorite', 0)),
+            is_pinned=bool(data.get('is_pinned', 0)),
+            is_archived=bool(data.get('is_archived', 0)),
+            is_trashed=bool(data.get('is_trashed', 0)),
+            color=data.get('color'),
+            attachments=data.get('attachments', '').split(',') if data.get('attachments') else [],
+            images=data.get('images', '').split(',') if data.get('images') else [],
+            links=data.get('links', '').split(',') if data.get('links') else [],
+            has_tasks=bool(data.get('has_tasks', 0)),
+            completed_tasks=data.get('completed_tasks', 0),
+            total_tasks=data.get('total_tasks', 0),
             word_count=data.get('word_count', 0),
-            char_count=data.get('char_count', 0),
-            has_images=bool(data.get('has_images', False)),
-            has_checkboxes=bool(data.get('has_checkboxes', False)),
+            character_count=data.get('character_count', 0),
+            reading_time=data.get('reading_time', 0),
+            encrypted=bool(data.get('encrypted', 1)),
+            encryption_version=data.get('encryption_version', '1.0')
         )
