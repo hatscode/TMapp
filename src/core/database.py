@@ -77,16 +77,19 @@ class Database:
                     word_count INTEGER DEFAULT 0,
                     char_count INTEGER DEFAULT 0,
                     has_images BOOLEAN DEFAULT 0,
-                    has_checkboxes BOOLEAN DEFAULT 0
+                    has_checkboxes BOOLEAN DEFAULT 0,
+                    FOREIGN KEY (notebook_id) REFERENCES notebooks(id)
                 )
             """)
             
-            # Indexes
+            # Indexes for performance
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_notebook ON notes(notebook_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes(updated_at DESC)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_deleted ON notes(deleted_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_favorite ON notes(is_favorite)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_tags ON notes(tags)")
             
-            # Create default notebook
+            # Create default notebook if none exists
             cursor.execute("SELECT COUNT(*) FROM notebooks")
             if cursor.fetchone()[0] == 0:
                 default_notebook = Notebook(
@@ -133,6 +136,20 @@ class Database:
             logger.error(f"Failed to get notebook: {e}")
             return None
     
+    def get_default_notebook(self) -> Optional[Notebook]:
+        """Get default notebook."""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM notebooks WHERE is_default = 1 LIMIT 1")
+                row = cursor.fetchone()
+                if row:
+                    return Notebook.from_dict(dict(row))
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get default notebook: {e}")
+            return None
+    
     def get_all_notebooks(self) -> List[Notebook]:
         """Get all notebooks."""
         try:
@@ -148,6 +165,7 @@ class Database:
     def update_notebook(self, notebook: Notebook) -> bool:
         """Update notebook."""
         try:
+            notebook.updated_at = datetime.now()
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 data = notebook.to_dict()
@@ -275,6 +293,7 @@ class Database:
     def update_note(self, note: Note) -> bool:
         """Update note."""
         try:
+            note.updated_at = datetime.now()
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 data = note.to_dict()
@@ -318,7 +337,7 @@ class Database:
             return False
     
     def restore_note(self, note_id: str) -> bool:
-        """Restore note."""
+        """Restore note from trash."""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
@@ -330,7 +349,7 @@ class Database:
             return False
     
     def search_notes(self, query: str) -> List[Note]:
-        """Search notes."""
+        """Search notes by title, content, or tags."""
         try:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
