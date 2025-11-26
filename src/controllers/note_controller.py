@@ -1,4 +1,3 @@
-"""Complete note controller with full CRUD operations."""
 import logging
 from typing import List, Optional
 from datetime import datetime
